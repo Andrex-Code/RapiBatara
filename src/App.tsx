@@ -1,4 +1,5 @@
-import { startTransition, useDeferredValue, useState } from "react";
+import { startTransition, useDeferredValue, useEffect, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   Bell,
   Bike,
@@ -6,6 +7,9 @@ import {
   ChevronRight,
   ClipboardCheck,
   CreditCard,
+  KeyRound,
+  LogIn,
+  LogOut,
   MessageCircle,
   Minus,
   Package,
@@ -22,14 +26,17 @@ import {
 } from "lucide-react";
 import { categories, initialAnnouncement, initialOrders, initialProducts } from "./data";
 import { formatCurrency } from "./lib/currency";
-import { isSupabaseConfigured } from "./lib/supabase";
-import type { Announcement, CartItem, Order, OrderStatus, PaymentMethod, Product, Role } from "./types";
+import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import type { Announcement, CartItem, Order, OrderStatus, PaymentMethod, Product } from "./types";
 
-const roleOptions: Array<{ id: Role; label: string; icon: typeof UserRound }> = [
-  { id: "resident", label: "Vecino", icon: UserRound },
-  { id: "owner", label: "Tendero", icon: Store },
-  { id: "courier", label: "Domiciliario", icon: Bike },
-];
+type AppScreen = "customer" | "staff-login" | "staff";
+type StaffView = "owner" | "courier" | "account";
+
+const STAFF_USERNAME = "rapitienda";
+const STAFF_AUTH_EMAIL = "rapitienda.rapibatara@gmail.com";
+const DEFAULT_STAFF_PASSWORD_HASH = "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92";
+const STAFF_PASSWORD_HASH_KEY = "rapibatara:staff-password-hash";
+const STAFF_SESSION_KEY = "rapibatara:staff-session";
 
 const statusMeta: Record<OrderStatus, { label: string; tone: string }> = {
   draft: { label: "Borrador", tone: "muted" },
@@ -51,8 +58,30 @@ function calculateCartTotal(cart: CartItem[], products: Product[]) {
   }, 0);
 }
 
+function getStoredStaffPasswordHash() {
+  return window.localStorage.getItem(STAFF_PASSWORD_HASH_KEY) ?? DEFAULT_STAFF_PASSWORD_HASH;
+}
+
+async function sha256(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 function App() {
-  const [role, setRole] = useState<Role>("resident");
+  const [screen, setScreen] = useState<AppScreen>(() =>
+    !isSupabaseConfigured && window.localStorage.getItem(STAFF_SESSION_KEY) === "active" ? "staff" : "customer",
+  );
+  const [staffView, setStaffView] = useState<StaffView>("owner");
+  const [loginUser, setLoginUser] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [accountMessage, setAccountMessage] = useState("");
   const [products, setProducts] = useState(initialProducts);
   const [orders, setOrders] = useState(initialOrders);
   const [cart, setCart] = useState<CartItem[]>([
@@ -80,9 +109,144 @@ function App() {
   const activeOrders = orders.filter((order) => order.status !== "delivered" && order.status !== "rejected");
   const lowStockProducts = products.filter((product) => product.stock <= product.lowStockAt);
   const courierOrders = orders.filter((order) => order.status === "approved" || order.status === "on_route");
+  const pageTitle =
+    screen === "staff-login"
+      ? "Acceso tienda"
+      : screen === "customer"
+        ? "Compra rápida"
+        : staffView === "courier"
+          ? "Ruta de entrega"
+          : staffView === "account"
+            ? "Cuenta de tienda"
+            : "Control del tendero";
 
-  function switchRole(nextRole: Role) {
-    startTransition(() => setRole(nextRole));
+  useEffect(() => {
+    if (!supabase) return;
+
+    let ignore = false;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (ignore) return;
+      const isStaffSession = data.session?.user.email?.toLowerCase() === STAFF_AUTH_EMAIL;
+      if (isStaffSession) {
+        startTransition(() => {
+          setStaffView("owner");
+          setScreen("staff");
+        });
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const isStaffSession = session?.user.email?.toLowerCase() === STAFF_AUTH_EMAIL;
+      startTransition(() => {
+        if (isStaffSession) {
+          setScreen("staff");
+          return;
+        }
+
+        setScreen((current) => (current === "staff" ? "customer" : current));
+      });
+    });
+
+    return () => {
+      ignore = true;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  async function handleStaffLogin() {
+    setLoginError("");
+    const userIsValid = loginUser.trim().toLowerCase() === STAFF_USERNAME;
+    if (!userIsValid) {
+      setLoginError("Usuario o contraseña incorrectos.");
+      return;
+    }
+
+    if (supabase) {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: STAFF_AUTH_EMAIL,
+        password: loginPassword,
+      });
+
+      if (error) {
+        setLoginError("Usuario o contraseña incorrectos.");
+        return;
+      }
+    } else {
+      const passwordHash = await sha256(loginPassword);
+      if (passwordHash !== getStoredStaffPasswordHash()) {
+        setLoginError("Usuario o contraseña incorrectos.");
+        return;
+      }
+
+      window.localStorage.setItem(STAFF_SESSION_KEY, "active");
+    }
+
+    setLoginPassword("");
+    setLoginError("");
+    startTransition(() => {
+      setStaffView("owner");
+      setScreen("staff");
+    });
+  }
+
+  async function handleStaffLogout() {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+
+    window.localStorage.removeItem(STAFF_SESSION_KEY);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setAccountMessage("");
+    startTransition(() => setScreen("customer"));
+  }
+
+  async function handlePasswordChange() {
+    setAccountMessage("");
+    if (newPassword.length < 6) {
+      setAccountMessage("La nueva contraseña debe tener mínimo 6 caracteres.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setAccountMessage("La confirmación no coincide.");
+      return;
+    }
+
+    if (supabase) {
+      const { error: currentPasswordError } = await supabase.auth.signInWithPassword({
+        email: STAFF_AUTH_EMAIL,
+        password: currentPassword,
+      });
+
+      if (currentPasswordError) {
+        setAccountMessage("La contraseña actual no es correcta.");
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+      if (updateError) {
+        setAccountMessage("No se pudo actualizar la contraseña. Intenta de nuevo.");
+        return;
+      }
+    } else {
+      const currentHash = await sha256(currentPassword);
+      if (currentHash !== getStoredStaffPasswordHash()) {
+        setAccountMessage("La contraseña actual no es correcta.");
+        return;
+      }
+
+      window.localStorage.setItem(STAFF_PASSWORD_HASH_KEY, await sha256(newPassword));
+    }
+
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setAccountMessage(supabase ? "Contraseña actualizada en Supabase Auth." : "Contraseña actualizada para este navegador.");
   }
 
   function updateCart(productId: string, delta: number) {
@@ -175,21 +339,60 @@ function App() {
           </div>
         </div>
 
-        <nav className="role-switcher" aria-label="Cambiar rol">
-          {roleOptions.map((option) => {
-            const Icon = option.icon;
-            return (
+        <nav className="role-switcher" aria-label="Navegación principal">
+          {screen !== "staff" && (
+            <>
               <button
-                className={role === option.id ? "role-button active" : "role-button"}
-                key={option.id}
-                onClick={() => switchRole(option.id)}
+                className={screen === "customer" ? "role-button active" : "role-button"}
+                onClick={() => startTransition(() => setScreen("customer"))}
                 type="button"
               >
-                <Icon aria-hidden="true" />
-                <span>{option.label}</span>
+                <UserRound aria-hidden="true" />
+                <span>Tienda</span>
               </button>
-            );
-          })}
+              <button
+                className={screen === "staff-login" ? "role-button active" : "role-button"}
+                onClick={() => startTransition(() => setScreen("staff-login"))}
+                type="button"
+              >
+                <LogIn aria-hidden="true" />
+                <span>Acceso tienda</span>
+              </button>
+            </>
+          )}
+
+          {screen === "staff" && (
+            <>
+              <button
+                className={staffView === "owner" ? "role-button active" : "role-button"}
+                onClick={() => startTransition(() => setStaffView("owner"))}
+                type="button"
+              >
+                <Store aria-hidden="true" />
+                <span>Tendero</span>
+              </button>
+              <button
+                className={staffView === "courier" ? "role-button active" : "role-button"}
+                onClick={() => startTransition(() => setStaffView("courier"))}
+                type="button"
+              >
+                <Bike aria-hidden="true" />
+                <span>Domiciliario</span>
+              </button>
+              <button
+                className={staffView === "account" ? "role-button active" : "role-button"}
+                onClick={() => startTransition(() => setStaffView("account"))}
+                type="button"
+              >
+                <KeyRound aria-hidden="true" />
+                <span>Cuenta</span>
+              </button>
+              <button className="role-button" onClick={handleStaffLogout} type="button">
+                <LogOut aria-hidden="true" />
+                <span>Salir</span>
+              </button>
+            </>
+          )}
         </nav>
 
         <div className="sidebar-status">
@@ -201,8 +404,8 @@ function App() {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <p className="section-label">Operación en vivo</p>
-            <h1>{role === "resident" ? "Compra rápida" : role === "owner" ? "Control del tendero" : "Ruta de entrega"}</h1>
+            <p className="section-label">{screen === "staff" ? "Operación privada" : "Tienda del conjunto"}</p>
+            <h1>{pageTitle}</h1>
           </div>
           <div className="topbar-actions">
             <button className="icon-button" type="button" aria-label="Mensajes">
@@ -211,20 +414,44 @@ function App() {
             <button className="icon-button" type="button" aria-label="Notificaciones">
               <Bell aria-hidden="true" />
             </button>
-            <button className="primary-action" type="button">
-              <Settings aria-hidden="true" />
-              Ajustes
+            <button
+              className="primary-action"
+              onClick={() =>
+                screen === "staff"
+                  ? startTransition(() => setStaffView("account"))
+                  : startTransition(() => setScreen("staff-login"))
+              }
+              type="button"
+            >
+              {screen === "staff" ? <Settings aria-hidden="true" /> : <LogIn aria-hidden="true" />}
+              {screen === "staff" ? "Cuenta" : "Acceso tienda"}
             </button>
           </div>
         </header>
 
-        <section className="metrics-grid" aria-label="Resumen operativo">
-          <MetricCard icon={ShoppingBasket} label="Pedidos activos" value={String(activeOrders.length)} detail="pendientes por resolver" />
-          <MetricCard icon={Wallet} label="Venta del día" value={formatCurrency(orders.reduce((sum, order) => sum + order.total, 0))} detail="digital + efectivo" />
-          <MetricCard icon={Package} label="Stock bajo" value={String(lowStockProducts.length)} detail="requiere revisión" />
-        </section>
+        {screen === "customer" && <CustomerBanner announcement={announcement} />}
 
-        {role === "resident" && (
+        {screen === "staff" && (
+          <section className="metrics-grid" aria-label="Resumen operativo">
+            <MetricCard icon={ShoppingBasket} label="Pedidos activos" value={String(activeOrders.length)} detail="pendientes por resolver" />
+            <MetricCard icon={Wallet} label="Venta del día" value={formatCurrency(orders.reduce((sum, order) => sum + order.total, 0))} detail="digital + efectivo" />
+            <MetricCard icon={Package} label="Stock bajo" value={String(lowStockProducts.length)} detail="requiere revisión" />
+          </section>
+        )}
+
+        {screen === "staff-login" && (
+          <StaffLoginView
+            error={loginError}
+            password={loginPassword}
+            username={loginUser}
+            onBackToStore={() => startTransition(() => setScreen("customer"))}
+            onPasswordChange={setLoginPassword}
+            onSubmit={handleStaffLogin}
+            onUsernameChange={setLoginUser}
+          />
+        )}
+
+        {screen === "customer" && (
           <ResidentView
             activeCategory={activeCategory}
             cart={cart}
@@ -251,7 +478,7 @@ function App() {
           />
         )}
 
-        {role === "owner" && (
+        {screen === "staff" && staffView === "owner" && (
           <OwnerView
             announcement={announcement}
             lowStockProducts={lowStockProducts}
@@ -263,7 +490,21 @@ function App() {
           />
         )}
 
-        {role === "courier" && <CourierView orders={courierOrders} onOrderStatusChange={updateOrderStatus} />}
+        {screen === "staff" && staffView === "courier" && <CourierView orders={courierOrders} onOrderStatusChange={updateOrderStatus} />}
+
+        {screen === "staff" && staffView === "account" && (
+          <AccountView
+            confirmPassword={confirmPassword}
+            currentPassword={currentPassword}
+            message={accountMessage}
+            newPassword={newPassword}
+            onConfirmPasswordChange={setConfirmPassword}
+            onCurrentPasswordChange={setCurrentPassword}
+            onLogout={handleStaffLogout}
+            onNewPasswordChange={setNewPassword}
+            onSubmit={handlePasswordChange}
+          />
+        )}
       </main>
     </div>
   );
@@ -286,6 +527,175 @@ function MetricCard({ icon: Icon, label, value, detail }: MetricCardProps) {
         <small>{detail}</small>
       </div>
     </article>
+  );
+}
+
+function CustomerBanner({ announcement }: { announcement: Announcement }) {
+  if (!announcement.active) return null;
+
+  return (
+    <section className="customer-banner" aria-label="Anuncio de la tienda">
+      <div>
+        <p className="section-label">Anuncio</p>
+        <h2>{announcement.title}</h2>
+        <p>{announcement.body}</p>
+      </div>
+      <ShoppingBasket aria-hidden="true" />
+    </section>
+  );
+}
+
+type StaffLoginViewProps = {
+  error: string;
+  password: string;
+  username: string;
+  onBackToStore: () => void;
+  onPasswordChange: (value: string) => void;
+  onSubmit: () => void;
+  onUsernameChange: (value: string) => void;
+};
+
+function StaffLoginView({
+  error,
+  password,
+  username,
+  onBackToStore,
+  onPasswordChange,
+  onSubmit,
+  onUsernameChange,
+}: StaffLoginViewProps) {
+  function submitLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void onSubmit();
+  }
+
+  return (
+    <section className="auth-panel">
+      <div className="auth-card">
+        <div className="auth-icon">
+          <Store aria-hidden="true" />
+        </div>
+        <div>
+          <p className="section-label">Privado</p>
+          <h2>Entrada del tendero</h2>
+          <p className="auth-copy">Acceso operativo para pedidos, inventario, pagos y domicilios.</p>
+        </div>
+        <form className="auth-form" onSubmit={submitLogin}>
+          <label className="field-label">
+            Usuario
+            <input autoComplete="username" value={username} onChange={(event) => onUsernameChange(event.target.value)} />
+          </label>
+          <label className="field-label">
+            Contraseña
+            <input
+              autoComplete="current-password"
+              type="password"
+              value={password}
+              onChange={(event) => onPasswordChange(event.target.value)}
+            />
+          </label>
+          {error && <p className="payment-warning">{error}</p>}
+          <button className="checkout-button" type="submit">
+            <LogIn aria-hidden="true" />
+            Entrar
+          </button>
+          <button className="secondary-button" onClick={onBackToStore} type="button">
+            Volver a la tienda
+          </button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+type AccountViewProps = {
+  confirmPassword: string;
+  currentPassword: string;
+  message: string;
+  newPassword: string;
+  onConfirmPasswordChange: (value: string) => void;
+  onCurrentPasswordChange: (value: string) => void;
+  onLogout: () => void;
+  onNewPasswordChange: (value: string) => void;
+  onSubmit: () => void;
+};
+
+function AccountView({
+  confirmPassword,
+  currentPassword,
+  message,
+  newPassword,
+  onConfirmPasswordChange,
+  onCurrentPasswordChange,
+  onLogout,
+  onNewPasswordChange,
+  onSubmit,
+}: AccountViewProps) {
+  function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void onSubmit();
+  }
+
+  return (
+    <section className="account-grid">
+      <article className="mini-panel">
+        <div className="panel-heading compact">
+          <div>
+            <p className="section-label">Cuenta</p>
+            <h2>rapitienda</h2>
+          </div>
+          <KeyRound aria-hidden="true" />
+        </div>
+        <p className="auth-copy">La sesión privada controla el panel del tendero y la vista del domiciliario.</p>
+        <button className="reject-button account-logout" onClick={onLogout} type="button">
+          <LogOut aria-hidden="true" />
+          Cerrar sesión
+        </button>
+      </article>
+
+      <article className="mini-panel">
+        <div className="panel-heading compact">
+          <div>
+            <p className="section-label">Seguridad</p>
+            <h2>Cambiar contraseña</h2>
+          </div>
+          <ShieldCheck aria-hidden="true" />
+        </div>
+        <form className="auth-form" onSubmit={submitPasswordChange}>
+          <label className="field-label">
+            Contraseña actual
+            <input
+              autoComplete="current-password"
+              type="password"
+              value={currentPassword}
+              onChange={(event) => onCurrentPasswordChange(event.target.value)}
+            />
+          </label>
+          <label className="field-label">
+            Nueva contraseña
+            <input
+              autoComplete="new-password"
+              type="password"
+              value={newPassword}
+              onChange={(event) => onNewPasswordChange(event.target.value)}
+            />
+          </label>
+          <label className="field-label">
+            Confirmar contraseña
+            <input
+              autoComplete="new-password"
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => onConfirmPasswordChange(event.target.value)}
+            />
+          </label>
+          {message && <p className="payment-warning neutral">{message}</p>}
+          <button className="checkout-button" type="submit">
+            Guardar contraseña
+          </button>
+        </form>
+      </article>
+    </section>
   );
 }
 
@@ -325,6 +735,8 @@ function ResidentView(props: ResidentViewProps) {
     props.cart.length === 0 || cashIsIncomplete || transferMissingProof || destinationMissing || hasUnavailableItems;
   const trackedOrder =
     props.orders.find((order) => order.id === props.lastPlacedOrderId) ??
+    props.orders.find((order) => order.status === "on_route") ??
+    props.orders.find((order) => order.status === "approved") ??
     props.orders.find((order) => order.status !== "delivered" && order.status !== "rejected") ??
     props.orders[0];
 
@@ -749,7 +1161,7 @@ function CourierView({ orders, onOrderStatusChange }: CourierViewProps) {
 }
 
 type OrderCardProps = {
-  children?: React.ReactNode;
+  children?: ReactNode;
   order: Order;
 };
 

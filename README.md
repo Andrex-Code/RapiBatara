@@ -24,3 +24,10 @@ npm run build
 4. Ejecuta la migración en `supabase/migrations/0001_initial_schema.sql`.
 
 El prototipo funciona con datos locales mientras Supabase no esté configurado.
+
+## Acceso operativo
+
+- Usuario inicial del tendero: `rapitienda`
+- Contraseña inicial: `123456`
+- En producción, el login usa Supabase Auth y el tendero puede cambiar la contraseña desde `Cuenta`.
+- Cambia la contraseña inicial apenas entregues la app al negocio.
