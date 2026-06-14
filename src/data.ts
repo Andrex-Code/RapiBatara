@@ -1,0 +1,126 @@
+import type { Announcement, Category, Order, Product } from "./types";
+
+export const categories: Category[] = [
+  { id: "despensa", name: "Despensa", order: 1 },
+  { id: "bebidas", name: "Bebidas", order: 2 },
+  { id: "aseo", name: "Aseo", order: 3 },
+  { id: "snacks", name: "Snacks", order: 4 },
+];
+
+export const initialProducts: Product[] = [
+  {
+    id: "arroz",
+    categoryId: "despensa",
+    name: "Arroz Diana 500 g",
+    description: "Básico de diario para resolver rápido.",
+    price: 3200,
+    stock: 18,
+    lowStockAt: 6,
+    image: "🍚",
+    featured: true,
+  },
+  {
+    id: "huevos",
+    categoryId: "despensa",
+    name: "Huevos AA x 12",
+    description: "Cubeta familiar para desayuno o cena.",
+    price: 11600,
+    stock: 7,
+    lowStockAt: 8,
+    image: "🥚",
+  },
+  {
+    id: "agua",
+    categoryId: "bebidas",
+    name: "Agua Cristal 1.5 L",
+    description: "Botella fría disponible para domicilio.",
+    price: 3900,
+    stock: 24,
+    lowStockAt: 8,
+    image: "💧",
+    featured: true,
+  },
+  {
+    id: "gaseosa",
+    categoryId: "bebidas",
+    name: "Gaseosa 1.5 L",
+    description: "Surtido de sabores según disponibilidad.",
+    price: 6200,
+    stock: 12,
+    lowStockAt: 5,
+    image: "🥤",
+  },
+  {
+    id: "papas",
+    categoryId: "snacks",
+    name: "Papas limón 115 g",
+    description: "Para antojo rápido o reunión en casa.",
+    price: 5800,
+    stock: 5,
+    lowStockAt: 6,
+    image: "🥔",
+    featured: true,
+  },
+  {
+    id: "detergente",
+    categoryId: "aseo",
+    name: "Detergente 1 kg",
+    description: "Disponible para entregas dentro del conjunto.",
+    price: 14500,
+    stock: 4,
+    lowStockAt: 4,
+    image: "🧼",
+  },
+];
+
+export const initialOrders: Order[] = [
+  {
+    id: "RB-1042",
+    customerName: "Apto 802, Torre 3",
+    destination: "Conjunto Batará, Torre 3, Apto 802",
+    createdAt: "Hoy, 10:18 a. m.",
+    status: "pending_review",
+    paymentMethod: "transfer",
+    transferProofName: "nequi-802.png",
+    notes: "Por favor llamar al llegar a recepción.",
+    items: [
+      { productId: "agua", name: "Agua Cristal 1.5 L", quantity: 2, unitPrice: 3900 },
+      { productId: "papas", name: "Papas limón 115 g", quantity: 1, unitPrice: 5800 },
+    ],
+    total: 13600,
+  },
+  {
+    id: "RB-1041",
+    customerName: "Apto 504, Torre 1",
+    destination: "Conjunto Batará, Torre 1, Apto 504",
+    createdAt: "Hoy, 9:54 a. m.",
+    status: "approved",
+    paymentMethod: "cash",
+    cashReceived: 50000,
+    changeDue: 26900,
+    items: [
+      { productId: "huevos", name: "Huevos AA x 12", quantity: 1, unitPrice: 11600 },
+      { productId: "gaseosa", name: "Gaseosa 1.5 L", quantity: 1, unitPrice: 6200 },
+      { productId: "papas", name: "Papas limón 115 g", quantity: 1, unitPrice: 5800 },
+    ],
+    total: 23600,
+  },
+  {
+    id: "RB-1040",
+    customerName: "Apto 1302, Torre 2",
+    destination: "Conjunto vecino Cedros, Torre B, Apto 1302",
+    createdAt: "Ayer, 7:22 p. m.",
+    status: "delivered",
+    paymentMethod: "transfer",
+    transferProofName: "bancolombia-1302.jpg",
+    items: [{ productId: "detergente", name: "Detergente 1 kg", quantity: 1, unitPrice: 14500 }],
+    total: 14500,
+  },
+];
+
+export const initialAnnouncement: Announcement = {
+  title: "Promo de tarde",
+  body: "Combos de bebida + snack con entrega rápida hasta las 8:00 p. m.",
+  active: true,
+  imageMode: "mixed",
+};
